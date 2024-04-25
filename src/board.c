@@ -12,39 +12,89 @@
 #define W  1
 #define E -1
 
-static bool is_legal_attack(Board *b, int pkind, int pcolor, int from, int to)
+#define WHITE_NORTH -1
+#define BLACK_NORTH  1
+
+static bool sq_occupied(Board *b, int n)
 {
-	if (!bb_nth(b->attacks[pkind][from], to))
-		return false;
+	uint64_t allmask = b->colors[WHITE]|b->colors[BLACK];
+	return bb_nth(allmask, n);
+}
 
-	if ((pcolor == WHITE && bb_nth(b->colors[WHITE], to)) ||
-	    (pcolor == BLACK && bb_nth(b->colors[BLACK], to)))
-	    return false;
+static bool is_legal_attack(Board *b, Move m)
+{
+	enum PieceKind pkind = m.piece.kind;
+	enum ColorKind pcolor = m.piece.color;
 
-	int dx = (to%BOARDW)-(from%BOARDW);
-	int dy = (to/BOARDW)-(from/BOARDW);
+	if (pkind == PAWN) {
+		int fx = (m.from%BOARDW); 
+		int fy = (m.from/BOARDW);
+		int tx = (m.to%BOARDW);
+		int ty = (m.to/BOARDW);
 
-	int xstep = (dx>0)?W:((dx<0)?E:0);
-	int ystep = (dy>0)?N:((dy<0)?S:0);
+		int dx = tx-fx;
+		int dy = ty-fy;
 
-	uint64_t allmask = b->colors[WHITE] | b->colors[BLACK];
-
-	for (int i = (from+xstep+ystep); i != to; i += (xstep+ystep))
-		if (bb_nth(allmask, i))
+		if (dx != 0)
 			return false;
+
+		int dir = pcolor==WHITE?WHITE_NORTH:BLACK_NORTH;
+
+		bool dst_occupied = sq_occupied(b, m.to);
+		bool has_moved = !((pcolor==WHITE&&fy==6) || (pcolor==BLACK&&fy==1));
+		bool singlepush = (dy==dir) && !dst_occupied;
+		bool doublepush = (dy==dir*2) && !has_moved && !dst_occupied;
+
+		if (!singlepush && !doublepush)
+			return false;
+	} else {
+		if (!bb_nth(b->attacks[pkind][m.from], m.to))
+			return false;
+
+		if ((pcolor == WHITE && bb_nth(b->colors[WHITE], m.to)) ||
+				(pcolor == BLACK && bb_nth(b->colors[BLACK], m.to)))
+			return false;
+
+		if (pkind == BISHOP || pkind == ROOK || pkind == QUEEN) {
+			int dx = (m.to%BOARDW)-(m.from%BOARDW);
+			int dy = (m.to/BOARDW)-(m.from/BOARDW);
+
+			int xstep = (dx>0)?W:((dx<0)?E:0);
+			int ystep = (dy>0)?N:((dy<0)?S:0);
+
+			uint64_t allmask = b->colors[WHITE] | b->colors[BLACK];
+
+			for (int i = (m.from+xstep+ystep); i != m.to; i += (xstep+ystep))
+				if (bb_nth(allmask, i))
+					return false;
+		}
+	}
 	return true;
 }
 
-bool board_move(Board *b, int pkind, int pcolor, int from, int to)
+static void board_clear_square(Board *b, int n)
 {
-	if (!is_legal_attack(b, pkind, pcolor, from, to))
+	int i;
+	for (i = 0; i < NCOLORS; i++)
+		bb_clear(&b->colors[i], n);
+	for (i = 0; i < NPIECES; i++)
+		bb_clear(&b->pieces[i], n);
+}
+
+static void board_set_square(Board *b, Piece p, int n)
+{
+	board_clear_square(b, n);
+	bb_set(&b->pieces[p.kind], n);
+	bb_set(&b->colors[p.color], n);
+}
+
+bool board_move(Board *b, Move m)
+{
+	if (!is_legal_attack(b, m))
 		return false;
 
-	bb_clear(&b->pieces[pkind], from);
-	bb_clear(&b->colors[pcolor], from);
-
-	bb_set(&b->pieces[pkind], to);
-	bb_set(&b->colors[pcolor], to);
+	board_clear_square(b, m.from);
+	board_set_square(b, m.piece, m.to);
 	return true;
 }
 
@@ -104,31 +154,43 @@ static void load_masks(const char *path, uint64_t masks[BOARDW*BOARDW])
 	fclose(fp);
 }
 
+void board_set_fen(Board *b, const char *fen)
+{
+	char c;
+	int sq = 0;
+	int len = strlen(fen);
+
+	board_clear(b);
+	for (int i = 0; i < len; i++) {
+		c = fen[i];
+		if (c == '/')
+			continue;
+
+		if (isdigit(c)) {
+			sq += c - '0';
+		} else {
+			bb_set(&b->colors[isupper(c)?WHITE:BLACK], sq);
+			bb_set(&b->pieces[c2piece(c)], sq);
+			++sq;
+		}
+	}
+}
+
 Board *board_create(const char *fen)
 {
 	Board *b = malloc(sizeof(Board));
 	if (b == NULL)
 		return NULL;
 
-	board_clear(b);
+	board_set_fen(b, fen);
+	b->orientation = WHITE;
 
 	load_masks("./assets/masks/cardinal.dat", b->attacks[ROOK]);
 	load_masks("./assets/masks/diagonal.dat", b->attacks[BISHOP]);
 	load_masks("./assets/masks/queen.dat", b->attacks[QUEEN]);
+	load_masks("./assets/masks/king.dat", b->attacks[KING]);
+	load_masks("./assets/masks/knight.dat", b->attacks[KNIGHT]);
 
-	char c;
-	size_t sq = 0;
-	for (size_t i = 0; i < strlen(fen); i++) {
-		if ((c = fen[i]) == '/')
-			continue;
-		else if (isdigit(c))
-			sq += c - '0';
-		else {
-			bb_set(&b->colors[isupper(c)?WHITE:BLACK], sq);
-			bb_set(&b->pieces[c2piece(c)], sq);
-			++sq;
-		}
-	}
 
 	return b;
 }
