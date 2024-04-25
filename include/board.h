@@ -7,6 +7,7 @@
 #define BOARDW 8
 #define NCOLORS 2
 #define NPIECES 6
+#define NSQUARES (BOARDW*BOARDW) 
 
 enum ColorKind {
 	BLACK = 0,
@@ -17,6 +18,7 @@ typedef struct {
 	uint64_t colors[NCOLORS];
 	uint64_t pieces[NPIECES];
 	uint64_t attacks[NPIECES][BOARDW*BOARDW];
+	enum ColorKind orientation;
 } Board;
 
 enum PieceKind {
@@ -34,11 +36,18 @@ typedef struct {
 	int idx;
 } Piece;
 
+/* TODO: make this shit fucking make sense asshole */
+typedef struct {
+	Piece piece;
+	int from, to;
+} Move;
+
 Board *board_create(const char *fen);
 void board_destroy(Board *b);
 
 Piece board_nthpiece(Board *b, int n);
 void board_clear(Board *b);
-bool board_move(Board *b, int pkind, int pcolor, int from, int to);
+bool board_move(Board *b, Move m);
+void board_set_fen(Board *b, const char *fen);
 
 #endif
