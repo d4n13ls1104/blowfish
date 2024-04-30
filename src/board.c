@@ -81,11 +81,11 @@ static void board_clear_square(Board *b, int n)
 		bb_clear(&b->pieces[i], n);
 }
 
-static void board_set_square(Board *b, Piece p, int n)
+static void board_set_square(Board *b, enum PieceKind k,  enum ColorKind c, int n)
 {
 	board_clear_square(b, n);
-	bb_set(&b->pieces[p.kind], n);
-	bb_set(&b->colors[p.color], n);
+	bb_set(&b->pieces[k], n);
+	bb_set(&b->colors[c], n);
 }
 
 bool board_move(Board *b, Move m)
@@ -94,7 +94,7 @@ bool board_move(Board *b, Move m)
 		return false;
 
 	board_clear_square(b, m.from);
-	board_set_square(b, m.piece, m.to);
+	board_set_square(b, m.piece.kind, m.piece.color, m.to);
 	return true;
 }
 
@@ -156,23 +156,17 @@ static void load_masks(const char *path, uint64_t masks[BOARDW*BOARDW])
 
 void board_set_fen(Board *b, const char *fen)
 {
-	char c;
-	int sq = 0;
-	int len = strlen(fen);
-
 	board_clear(b);
-	for (int i = 0; i < len; i++) {
-		c = fen[i];
+
+	int sq = 0;
+	for (size_t i = 0; i < strlen(fen); i++) {
+		char c = fen[i];
 		if (c == '/')
 			continue;
-
-		if (isdigit(c)) {
+		else if (isdigit(c))
 			sq += c - '0';
-		} else {
-			bb_set(&b->colors[isupper(c)?WHITE:BLACK], sq);
-			bb_set(&b->pieces[c2piece(c)], sq);
-			++sq;
-		}
+		else
+			board_set_square(b, c2piece(c), isupper(c)?WHITE:BLACK, sq++);
 	}
 }
 
