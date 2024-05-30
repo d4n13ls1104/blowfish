@@ -15,61 +15,93 @@
 #define WHITE_NORTH -1
 #define BLACK_NORTH  1
 
-static bool sq_occupied(Board *b, int n)
+static enum ColorKind sqcolor(Board *b, int n)
+{
+	if (bb_nth(b->colors[WHITE], n))
+		return WHITE;
+	else if (bb_nth(b->colors[BLACK], n))
+		return BLACK;
+	else
+		return -1;
+}
+
+static bool nthsq(Board *b, int n)
 {
 	uint64_t allmask = b->colors[WHITE]|b->colors[BLACK];
 	return bb_nth(allmask, n);
 }
 
-static bool is_legal_attack(Board *b, Move m)
+static void I2XY(int i, int *x, int *y, int rwid)
 {
-	enum PieceKind pkind = m.piece.kind;
-	enum ColorKind pcolor = m.piece.color;
+	*x = i % rwid;
+	*y = i / rwid;
+}
 
-	if (pkind == PAWN) {
-		int fx = (m.from%BOARDW); 
-		int fy = (m.from/BOARDW);
-		int tx = (m.to%BOARDW);
-		int ty = (m.to/BOARDW);
+static bool attack(Board *b, Move m)
+{
+	int pk = m.piece.kind;
+	int pc = m.piece.color;
 
-		int dx = tx-fx;
-		int dy = ty-fy;
+	int sqc = sqcolor(b, m.to);
+	bool selfcap = (sqc==WHITE&&pc==WHITE)
+		     ||(sqc==BLACK&&pc==BLACK);
+	if (selfcap)
+		return false;
 
-		if (dx != 0)
-			return false;
+	if (!bb_nth(b->attacks[pk][m.from], m.to))
+		return false;
 
-		int dir = pcolor==WHITE?WHITE_NORTH:BLACK_NORTH;
+	printf("MASK: %016lX\n", b->attacks[pk][m.from]);
 
-		bool dst_occupied = sq_occupied(b, m.to);
-		bool has_moved = !((pcolor==WHITE&&fy==6) || (pcolor==BLACK&&fy==1));
-		bool singlepush = (dy==dir) && !dst_occupied;
-		bool doublepush = (dy==dir*2) && !has_moved && !dst_occupied;
+	int tx,ty,fx,fy;
+	I2XY(m.to, &tx, &ty, BOARDW);
+	I2XY(m.from, &fx, &fy, BOARDW);
+	int dx = tx-fx;
+	int dy = ty-fy;
 
-		if (!singlepush && !doublepush)
-			return false;
-	} else {
-		if (!bb_nth(b->attacks[pkind][m.from], m.to))
-			return false;
+	if (pk == PAWN && dx != 0)
+		return true;
+	else if (pk == BISHOP || pk == ROOK || pk == QUEEN) {
+		int xst = (dx>0)?W:((dx<0)?E:0);
+		int yst = (dy>0)?N:((dy<0)?S:0);
 
-		if ((pcolor == WHITE && bb_nth(b->colors[WHITE], m.to)) ||
-				(pcolor == BLACK && bb_nth(b->colors[BLACK], m.to)))
-			return false;
+		for (int i = (m.from+xst+yst); i != m.to; i += (xst+yst))
+			if (nthsq(b, i))
+				return false;
+	} 
 
-		if (pkind == BISHOP || pkind == ROOK || pkind == QUEEN) {
-			int dx = (m.to%BOARDW)-(m.from%BOARDW);
-			int dy = (m.to/BOARDW)-(m.from/BOARDW);
-
-			int xstep = (dx>0)?W:((dx<0)?E:0);
-			int ystep = (dy>0)?N:((dy<0)?S:0);
-
-			uint64_t allmask = b->colors[WHITE] | b->colors[BLACK];
-
-			for (int i = (m.from+xstep+ystep); i != m.to; i += (xstep+ystep))
-				if (bb_nth(allmask, i))
-					return false;
-		}
-	}
+	printf("LEGALATTACK\n");
 	return true;
+}
+
+static bool pawnpush(Board *b, Move m)
+{
+	int pk = m.piece.kind;
+	int pc = m.piece.color;
+	if (pk != PAWN)
+		return false;
+	int fx,fy,tx,ty;
+	I2XY(m.from, &fx, &fy, BOARDW);
+	I2XY(m.to, &tx, &ty, BOARDW);
+	int dy = ty-fy;
+	int dx = tx-fx;
+	if (nthsq(b, m.to) || dx != 0)
+		return false;
+	int pdir = pc==WHITE?-1:1;
+	bool firstmove = ((pc==WHITE&&fy==6)||(pc==BLACK&&dy==1));
+	bool doublepush = (dy==pdir*2)&&firstmove;
+	bool singlepush = (dy==pdir);
+	if (!singlepush && !doublepush)
+		return false;
+	printf("LEGAL PAWN PUSH\n");
+	return true;
+}
+
+static bool legalmove(Board *b, Move m)
+{
+	if (pawnpush(b, m) || attack(b, m))
+		return true;
+	return false;
 }
 
 static void board_clear_square(Board *b, int n)
@@ -81,7 +113,7 @@ static void board_clear_square(Board *b, int n)
 		bb_clear(&b->pieces[i], n);
 }
 
-static void board_set_square(Board *b, enum PieceKind k,  enum ColorKind c, int n)
+static void board_set_square(Board *b, enum PieceKind k, enum ColorKind c, int n)
 {
 	board_clear_square(b, n);
 	bb_set(&b->pieces[k], n);
@@ -90,7 +122,7 @@ static void board_set_square(Board *b, enum PieceKind k,  enum ColorKind c, int 
 
 bool board_move(Board *b, Move m)
 {
-	if (!is_legal_attack(b, m))
+	if (!legalmove(b, m))
 		return false;
 
 	board_clear_square(b, m.from);
@@ -146,9 +178,10 @@ static enum PieceKind c2piece(char c)
 static void load_masks(const char *path, uint64_t masks[BOARDW*BOARDW])
 {
 	FILE *fp = fopen(path, "rb");
-	if (fp == NULL)
-		errx(EXIT_FAILURE, "fopen: %s\n", path);
-
+	if (fp == NULL) {
+		perror("fopen");
+		exit(EXIT_FAILURE);
+	}
 	for (int i = 0; i < BOARDW*BOARDW; i++)
 		fread(&masks[i], sizeof(uint64_t), 1, fp);
 	fclose(fp);
@@ -184,6 +217,7 @@ Board *board_create(const char *fen)
 	load_masks("./assets/masks/queen.dat", b->attacks[QUEEN]);
 	load_masks("./assets/masks/king.dat", b->attacks[KING]);
 	load_masks("./assets/masks/knight.dat", b->attacks[KNIGHT]);
+	load_masks("./assets/masks/pawn.dat", b->attacks[PAWN]);
 
 
 	return b;
